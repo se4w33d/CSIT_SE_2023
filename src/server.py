@@ -36,8 +36,8 @@ def validate_date_format(check_in_date: str, check_out_date: str):
     try:
         parse_in = parse(check_in_date, fuzzy=False)
         parse_out = parse(check_out_date, fuzzy=False)
-        format_in = date.strftime(parse_in, '%Y-%m-%d')
-        format_out = date.strftime(parse_out, '%Y-%m-%d')
+        format_in = date.strftime(parse_in, "%Y-%m-%d")
+        format_out = date.strftime(parse_out, "%Y-%m-%d")
         return format_in, format_out
     except ParserError as err:
         raise HTTPException(status_code=400, detail="Wrong input format.")
@@ -56,9 +56,9 @@ def validate_destination(cur, destination):
     res = cur.count_documents(destination)
     if res == 0:
         return JSONResponse(
-        status_code=200,
-        content={"detail": "Don't have such destination."},
-    )
+            status_code=200,
+            content={"detail": "Don't have such destination."},
+        )
     return None
 
 
@@ -70,9 +70,25 @@ def populate_to_src_dest(res, dict_type):
         dict_type["flights"].append(flight)
 
 
+def retrieve_flights(db_cursor, source, destination, date):
+        result = db_cursor.aggregate(
+            [
+                {
+                    "$match": {
+                        "srccity": source,
+                        "destcity": destination,
+                        "date": datetime.fromisoformat(date),
+                    }
+                },
+                {"$project": {"airlinename": 1, "price": 1}},
+                {"$sort": {"price": 1}},
+            ]
+        )
+        return result
+
+
 @app.get("/flight", status_code=200)
 def get_flight(departureDate: str, returnDate: str, destination: str):
-    
     app.flights = app.database.flights
 
     departureDate, returnDate = validate_date_format(departureDate, returnDate)
@@ -80,113 +96,50 @@ def get_flight(departureDate: str, returnDate: str, destination: str):
     cities = ["Singapore", destination]
     cities.sort()
 
-    # res = validate_destination(app.flights, {"destcity": destination})
-    # if res:
-    #     return res
+    # departure flights
+    departure_result = retrieve_flights(app.flights, "Singapore", destination, departureDate)
+    departure_result_list = list(departure_result)
+    # return flights
+    return_result = retrieve_flights(app.flights, destination, "Singapore", returnDate)
+    return_result_list = list(return_result)
+    
 
-    result = app.flights.aggregate(
-        [
-            {
-                "$match": {
-                    "srccity": {"$in": cities},
-                    "destcity": {"$in": cities},
-                    "date": {
-                        "$in": [
-                            datetime.fromisoformat(departureDate),
-                            datetime.fromisoformat(returnDate),
-                        ]
-                    },
-                }
-            },
-            {
-                "$match": {
-                    "$or": [
-                        {
-                            "$and": [
-                                {"srccity": "Singapore"},
-                                {"date": datetime.fromisoformat(departureDate)},
-                            ]
-                        },
-                        {
-                            "$and": [
-                                {"srccity": destination},
-                                {"date": datetime.fromisoformat(returnDate)},
-                            ]
-                        },
-                    ]
-                }
-            },
-            {
-                "$bucket": {
-                    "groupBy": "$srccity",
-                    "boundaries": cities,
-                    "default": cities[-1],
-                    "output": {
-                        "count": {"$sum": 1},
-                        "flights": {
-                            "$push": {
-                                "date": "$date",
-                                "airline": "$airlinename",
-                                "price": "$price",
-                            }
-                        },
-                    },
-                }
-            },
-            {
-                "$project": {
-                    "_id": 1,
-                    "count": 1,
-                    "flights": {
-                        "$sortArray": {"input": "$flights", "sortBy": {"price": 1}}
-                    },
-                }
-            },
-        ]
-    )
+    if not (departure_result_list or return_result_list):
+        responses = []
+        responses = json.dumps(responses)
+        responses = json.loads(responses)
+        return responses
 
-    if not (result := list(result)):
-        return []
+    def find_cheapest(flight):
+        if flight["price"] == cheapest["price"]:
+            return True
+        return False
+    
+    cheapest = departure_result_list[0]
+    cheapest_iter = filter(find_cheapest, departure_result_list)
+    cheapest_departure = list(cheapest_iter)
 
-    src = dict()
-    dest = dict()
+    cheapest = return_result_list[0]
+    cheapest_iter = filter(find_cheapest, return_result_list)
+    cheapest_return = list(cheapest_iter)
 
-    for i in result:
-        if i["_id"] == "Singapore":
-            src["flights"] = []
-            populate_to_src_dest(i, src)
-        else:
-            dest["flights"] = []
-            populate_to_src_dest(i, dest)
-
-
-    src_dest = list(zip(src["flights"], dest["flights"]))
-
-    lowest_price = src_dest[0][0]["price"] + src_dest[0][1]["price"]
-    flag = -1
-
-    for i in src_dest:
-        if i[0]["price"] + i[1]["price"] == lowest_price:
-            flag += 1
-
-    src_dest = src_dest[:flag+1]
-
+    # generate response
     responses = []
-
-    for i in src_dest:
-        flight = dict()
-        flight["City"] = destination
-        flight["Departure Date"] = departureDate
-        flight["Departure Airline"] = i[0]["airline_name"]
-        flight["Departure Price"] = i[0]["price"]
-        flight["Return Date"] = returnDate
-        flight["Return Airline"] = i[1]["airline_name"]
-        flight["Return Price"] = i[1]["price"]
-        responses.append(flight)
+    for depart_f in cheapest_departure:
+        for return_f in cheapest_return:
+            temp = dict()
+            temp["City"] = destination
+            temp["Departure Date"] = departureDate
+            temp["Departure Airline"] = depart_f["airlinename"]
+            temp["Departure Price"] = depart_f["price"]
+            temp["Return Date"] = returnDate
+            temp["Return Airline"] = return_f["airlinename"]
+            temp["Return Price"] = return_f["price"]
+            responses.append(temp)
 
     responses = json.dumps(responses)
     responses = json.loads(responses)
-    return (responses)
+    return responses
 
 
 @app.get("/hotel", status_code=200)
@@ -196,10 +149,6 @@ def get_hotel(checkInDate: str, checkOutDate: str, destination: str):
     checkInDate, checkOutDate = validate_date_format(checkInDate, checkOutDate)
 
     diff = compute_day_difference(checkInDate, checkOutDate)
-
-    # res = validate_destination(app.hotels, {"city": destination})
-    # if res:
-    #     return res
 
     filter = {
         "date": {
@@ -248,4 +197,4 @@ def get_hotel(checkInDate: str, checkOutDate: str, destination: str):
 
     responses = json.dumps(responses)
     responses = json.loads(responses)
-    return (responses)
+    return responses

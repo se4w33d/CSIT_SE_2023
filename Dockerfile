@@ -10,6 +10,6 @@ COPY /src /app/src
 
 WORKDIR /app/src
 
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0"]
-
 EXPOSE 8080
+
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8080"]
