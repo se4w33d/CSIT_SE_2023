@@ -2,7 +2,7 @@
 
 A [mini challenge](https://www.csit.gov.sg/events/csit-mini-challenge) created by Centre for Strategic Infocomm Technologies (CSIT).
 
-![detail](.\images\detail.png)
+![detail](./images/detail.png)
 
 
 
